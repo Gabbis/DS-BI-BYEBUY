@@ -1,0 +1,162 @@
+create temp table customer_details as
+     select
+        sfid as customer_id,       
+        createddate as account_create_date,
+        payments_holded__c as payments_held_date,
+        test__c as test_flag,       
+        payments_outstanding_amount__c as outstansing_payment_amount,
+        is_blacklisted__c as blacklist_flag,       
+        payments_outstanding__c as no_of_outstanding_payments,       
+        shippingcountry as customer_country,
+        payments_debt_collection__c as payments_debt_collection,       
+        locale__c as locale,
+        age__c as customer_age,
+        birthdate__c as customer_birthdate,
+        payments_heads_up_1__c as payments_heads_up_1,
+        payments_heads_up_2__c as payments_heads_up_2,
+        payments_notice_1__c as payments_notice_1,
+        payments_notice_2__c as payments_notice_2,
+        payments_notice_3__c as payments_notice_3
+        from salesforce.account
+
+create temp table customer_current_payment_status as
+     select
+        distinct on (a.sfid) a.sfid as customer_id,
+        n1.status__c,
+        n1.pay_tries__c,
+        n1.payment_id
+        from salesforce.account a
+        inner join
+        (select customer__c, paid__c, status__c, pay_tries__c, row_number() over (partition by order__c order by due_date__c ) as payment_id from salesforce.payment_request__c) n1
+        on a.sfid = n1.customer__c
+        where n1.status__c <> 'PLANNED'
+        order by customer_id, n1.paid__c desc
+
+create temp table customer_entry_item as
+     select
+        distinct on (customer__c) customer__c as customer_id,
+        asset_name__c as customer_entry_item
+        from salesforce.customer_asset_allocation__c
+        order by customer__c, allocated__c asc   
+
+
+create temp table customer_p as
+     select
+        distinct on (a.sfid) a.sfid as customer_id,
+        count(*) FILTER (WHERE b.status__c not in( 'PLANNED', 'CANCELLED','PENDING')) as no_of_payments_processed,
+        count(*) FILTER (WHERE b.status__c = 'PAID') AS no_of_succesful_payments,
+        count(*) FILTER (WHERE b.status__c = 'FAILED') AS no_of_failed_payments,
+        count(b.amount_requested__c) FILTER (WHERE b.status__c not in( 'PLANNED', 'CANCELLED','PENDING')) as amount_of_payments_processed,
+        count(b.amount_requested__c) FILTER (WHERE b.status__c = 'PAID') AS amount_of_succesful_payments,
+        count(b.amount_requested__c) FILTER (WHERE b.status__c = 'FAILED') AS amount_of_failed_payments,
+        sum(pay_tries__c) FILTER (WHERE b.status__c not in( 'PLANNED', 'CANCELLED','PENDING')) as no_of_payment_tries
+        from salesforce.account a
+        left outer join salesforce.payment_request__c b
+        on a.sfid = b.customer__c
+        group by a.sfid
+
+
+create temp table customer_first_order_date_C as
+     select
+        distinct on (accountid) accountid as customer_id,
+        order_creation__c
+        from salesforce.order
+        order by accountid, order_creation__c asc
+
+
+create temp table customer_first_payment_date as
+     select
+        distinct on (accountid) accountid as customer_id,
+        paid__c
+        from salesforce.order
+        order by accountid, paid__c asc
+
+
+create temp table customer_order as
+     select
+        distinct on (a.sfid) a.sfid as customer_id,
+        count(*) FILTER (WHERE b.status in('SHIPPED', 'DELIVERED')) as no_of_orders,
+        sum(b.spree_order_total__c) FILTER (WHERE b.status in('SHIPPED', 'DELIVERED')) as amount_of_orders
+        from salesforce.account a
+        left join salesforce.order b
+        on a.sfid = b.accountid
+        group by a.sfid
+
+create temp table customer_current_payment as
+      select
+         distinct on (customer__c) customer__c as customer_id,
+         status__c
+         from salesforce.payment_request__c
+         where status__c <> 'PLANNED'
+         order by customer__c , createddate desc
+
+create temp table customer_first_allocation as
+      select
+          distinct on (customer__c) customer__c as customer_id,
+          allocated__c as first_allocated_date
+          from salesforce.customer_asset_allocation__c           
+          order by customer__c, allocated__c asc
+
+create temp table customer_last_allocation as
+      select
+          distinct on (customer__c) customer__c as customer_id,
+          cancelltion_approved__C as last_allocated_date
+          from salesforce.customer_asset_allocation__c           
+          order by customer__c, cancelltion_approved__C desc
+
+drop table if exists bi_dwh.customer_details
+
+
+create table bi_dwh.customer_details as
+     select
+        a.sfid as customer_id,       
+        a.createddate as account_create_date,
+        a.payments_holded__c as payments_held_date,
+        a.test__c as test_flag,       
+        a.payments_outstanding_amount__c as outstansing_payment_amount,
+        a.is_blacklisted__c as blacklist_flag,       
+        a.payments_outstanding__c as no_of_outstanding_payments,       
+        a.shippingcountry as customer_country,
+        a.payments_debt_collection__c as payments_debt_collection,       
+        a.locale__c as locale,
+        a.age__c as customer_age,
+        a.birthdate__c as customer_birthdate,
+        a.payments_heads_up_1__c as payments_heads_up_1,
+        a.payments_heads_up_2__c as payments_heads_up_2,
+        a.payments_notice_1__c as payments_notice_1,
+        a.payments_notice_2__c as payments_notice_2,
+        a.payments_notice_3__c as payments_notice_3,
+        b.no_of_payments_processed,
+        b.no_of_succesful_payments,
+        b.no_of_failed_payments,
+        b.amount_of_payments_processed,
+        b.amount_of_succesful_payments,
+        b.amount_of_failed_payments,
+        b.no_of_payment_tries,
+        c.order_creation__c as first_order_date,
+        d.paid__c as first_paid_date,
+        e.no_of_orders,
+        e.amount_of_orders,
+        f.status__c,
+        f.pay_tries__c,
+        f.payment_id,
+        g.first_allocated_date,
+        h.last_allocated_date,
+        i.customer_entry_item         
+        from salesforce.account a
+        left join customer_p b
+        on a.sfid = b.customer_id
+        left join customer_first_order_date_C c
+        on a.sfid = c.customer_id
+        left join customer_first_payment_date d
+        on a.sfid = d.customer_id
+        left join customer_order e
+        on a.sfid = e.customer_id
+        left join customer_current_payment_status f
+        on a.sfid = f.customer_id
+        left join customer_first_allocation g
+        on a.sfid = g.customer_id
+        left join customer_last_allocation h
+        on a.sfid = h.customer_id
+        left join customer_entry_item i
+        on a.sfid = i.customer_id

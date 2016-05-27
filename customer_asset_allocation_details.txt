@@ -1,0 +1,29 @@
+drop table bi_dwh.customer_asset_allocation_details
+
+create table bi_dwh.customer_asset_allocation_details as
+select asset__c as asset_id,
+delivered__c as delivered_date,
+return_label_created__c as return_label_created_date,
+return_delivered__c as return_delivered_date,
+sfid as customer_asset_allocation_id,
+amount__c as recurring_payment_amount,
+createddate as allocation_created_date,
+to_purchase__c as purchase_flag,
+cancelltion_approved__c as cancellation_approved_date,
+is_cross_sale__c as cross_sale_flag,
+cancelltion_requested__c as cancellation_requested_date,
+shipment_date__c as shipment_date,
+shipment_price__C as shipment_cost,
+currency__c as currency,
+order_product__c as order_item_id,
+insurance_cancelled__c as insurance_cancelled_date,
+customer__c as customer_id,
+allocated__c as allocated_date,
+lastmodifieddate as last_modified_date,
+usage_end_date__c as usage_end_date,
+order__c as order_id,
+asset_name__c as asset_name,
+time_to_ship__c as time_to_ship,
+shipping_label_created__c as shipping_label_created_time,
+ready_to_ship__c as ready_to_ship_date
+from salesforce.customer_asset_allocation__c

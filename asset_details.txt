@@ -1,0 +1,127 @@
+create temp table asset_details as
+     select
+        createddate as asset_creation_date,
+        cost_price__c as cost_price,
+        condition__c as condition,
+        sku_global__c as sku_global,
+        test__c as test_flag,
+        accountid as customer_id,
+        brand__c as brand,
+        iscompetitorproduct as competitorflag,
+        insurance_coverage__c as insurance_coverage,
+        sfid as asset_id,
+        status as asset_status,
+        supplier__c as supplier_id ,
+        name as asset_name,
+        purchased__c as asset_purchase_date,
+        asset_allocation__c as caa_id
+        from salesforce.asset
+
+create temp table asset_caa as
+     select
+        distinct on (n1.asset__c) n1.asset__c as asset_id,
+        sum(n1.allocation_rental_days) as asset_rental_days,
+        count(n1.sfid) as no_of_rentals
+         from
+        (select a.sfid, asset__c, cancelltion_approved__c, allocated__c, b.approved__c,
+         extract(epoch from (CASE
+        WHEN cancelltion_approved__c  is null THEN now()-b.approved__c
+        WHEN cancelltion_approved__c is not null THEN cancelltion_approved__c - b.approved__c
+        END ))/86400  as allocation_rental_days       
+         from salesforce.customer_asset_allocation__c a left join salesforce.order b on a.order__c = b.sfid ) n1
+        group by asset_id
+
+###select sfid, asset__c, cancelltion_approved__c, allocated__c,
+         extract(epoch from (CASE
+        WHEN cancelltion_approved__c is null THEN now()-allocated__c
+        WHEN cancelltion_approved__c is not null THEN cancelltion_approved__c - allocated__c
+        END ))/86400  as allocation_rental_days from salesforce.customer_asset_allocation__c ###
+
+
+
+
+
+create temp table asset_payments as
+     select
+        distinct on (a.sfid) a.sfid as asset_id,
+        count(*) FILTER (WHERE c.status__c <> 'PLANNED') as no_of_processed_payments,
+        count(*) FILTER (WHERE c.status__c = 'FAILED') AS no_of_failed_payments,
+        count(*) FILTER (WHERE c.status__c = 'PAID') AS no_of_successful_payments,
+        sum(amount__c) FILTER (WHERE c.status__c = 'PAID') AS amount_of_successful_payments,
+        sum(amount__c) FILTER (WHERE c.status__c = 'FAILED') AS amount_of_failed_payments
+        from salesforce.asset a
+        left outer join salesforce.payment_request_item__c b
+        on a.sfid = b.asset__c
+        left outer join salesforce.payment_request__c c
+        on b.payment_request__c = c.sfid
+        group by a.sfid
+
+create temp table asset_current_payment_status as
+     select
+        distinct on (a.asset__c) a.asset__c as asset_id,
+        n1.status__c,
+        n1.pay_tries__c,
+        n1.payment_id
+        from salesforce.payment_request_item__c a
+        left join
+        (select asset__c as Asset_id,a.sfid, a.due_date__c, a.status__c,payment_request__c, pay_tries__c, row_number() over (partition by asset__c order by a.due_date__c ) as payment_id from salesforce.payment_request__c a
+        left join salesforce.payment_request_item__c b on a.sfid = b.payment_request__c ) n1
+        on a.payment_request__c = n1.payment_request__c
+        where n1.status__c <> 'PLANNED'
+        order by Asset_id, n1.due_date__c desc
+
+
+create temp table asset_current_allocation as
+     select
+        distinct on (asset__c) asset__c as asset_id,
+        allocated__c as current_allocated_date, cancelltion_approved__c as cancellation_approval_date
+        from salesforce.customer_asset_allocation__c           
+        order by asset__c, allocated__c desc
+
+drop table if exists bi_dwh.asset_details
+
+
+create table bi_dwh.asset_details as
+     select
+        a.asset_creation_date,
+        a.cost_price,
+        a.condition,
+        a.sku_global,
+        a.test_flag,
+        a.customer_id,
+        a.brand,
+        a.competitorflag,
+        a.insurance_coverage,
+        a.asset_id,
+        a.asset_status,
+        a.supplier_id ,
+        a.asset_name,
+        a.asset_purchase_date,
+        a.caa_id,       
+        b.asset_rental_days,
+        b.no_of_rentals,
+        c.no_of_processed_payments,
+        c.no_of_failed_payments,
+        c.no_of_successful_payments,
+        c.amount_of_successful_payments,
+        c.amount_of_failed_payments,
+        d.status__c as asset_current_payment_status,
+        d.pay_tries__c as asset_current_payment_tries,
+        d.payment_id as asset_current_payment_id,
+        e.current_allocated_date,
+        e.cancellation_approval_date,
+        CASE
+        WHEN e.cancellation_approval_date is null
+        then 'ALLOCATED'
+        when e.cancellation_approval_date is not null
+        then 'NOT ALLOCATED'
+        END as asset_allocation_status               
+        from asset_details  a
+        left join asset_caa b
+        on a.asset_id = b.asset_id
+        left join asset_payments c
+        on a.asset_id = c.asset_id
+        left join asset_current_payment_status d
+        on a.asset_id = d.Asset_id
+        left join asset_current_allocation e
+        on a.asset_id = e.asset_id

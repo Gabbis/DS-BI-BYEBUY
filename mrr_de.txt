@@ -1,0 +1,164 @@
+create table bi_dwh.mrr_de (
+date date,
+        revenue_first_payment float,
+        revenue_shipment float,
+        discount_given float,
+        recurring_revenue_due float,
+        cancelled_revenue float)
+
+
+CREATE OR REPLACE FUNCTION mrr_de()
+            RETURNS setof bi_dwh.mrr_de AS
+            $$
+
+            DECLARE
+            cur_date date;
+
+            BEGIN
+
+            FOR cur_date IN (SELECT generate_series('2015-06-01'::date,now()::date, '1 day')  as cur_date) LOOP
+
+            RETURN QUERY
+            WITH insertion AS (
+
+
+            insert into bi_dwh.mrr_de(date,
+        revenue_first_payment,
+        revenue_shipment,
+        discount_given,
+        recurring_revenue_due,
+        cancelled_revenue
+        )
+        values
+        (cur_date,
+        (select sum(order_item_revenue) from
+            salesforce.payment_request__c a
+        left join (
+        select distinct(orderid) as order_id,   
+        sum(unitprice) FILTER ( where product_name__c = 'Shipment') as shipment_revenue,
+        sum(unitprice)  FILTER ( where product_name__c = 'Adjustment') as discount_revenue,
+        sum(unitprice)  FILTER ( where product_name__c not in('Shipment','Adjustment')) as order_item_revenue
+        from
+        salesforce.orderitem
+        group by orderid
+        ) b
+         on
+        (a.order__c = b.order_id)
+        left join
+        salesforce.order c
+        on a.order__c = c.sfid
+        where due_date__c :: date = cur_date /*cur_date */
+        and
+        c.status in ('DELIVERED', 'SHIPPED')
+        and
+        a.type__c = 'FIRST'
+        and
+        a.status__c not in ('CANCELLED')
+        and
+        c.store__c = 'Germany'),
+       (select sum(shipment_revenue) from
+            salesforce.payment_request__c a
+        left join (
+        select distinct(orderid) as order_id,   
+        sum(unitprice) FILTER ( where product_name__c = 'Shipment') as shipment_revenue,
+        sum(unitprice)  FILTER ( where product_name__c = 'Adjustment') as discount_revenue,
+        sum(unitprice)  FILTER ( where product_name__c not in('Shipment','Adjustment')) as order_item_revenue
+        from
+        salesforce.orderitem
+        group by orderid
+        ) b
+         on
+        (a.order__c = b.order_id)
+        left join
+        salesforce.order c
+        on a.order__c = c.sfid
+        where due_date__c :: date = cur_date /*cur_date */
+        and
+        c.status in ('DELIVERED', 'SHIPPED')
+        and
+        a.type__c = 'FIRST'
+        and
+        a.status__c not in ('CANCELLED')
+        and
+        c.store__c = 'Germany'),
+
+       (select sum(discount_revenue) from
+            salesforce.payment_request__c a
+        left join (
+        select distinct(orderid) as order_id,   
+        sum(unitprice) FILTER ( where product_name__c = 'Shipment') as shipment_revenue,
+        sum(unitprice)  FILTER ( where product_name__c = 'Adjustment') as discount_revenue,
+        sum(unitprice)  FILTER ( where product_name__c not in('Shipment','Adjustment')) as order_item_revenue
+        from
+        salesforce.orderitem
+        group by orderid
+        ) b
+         on
+        (a.order__c = b.order_id)
+        left join
+        salesforce.order c
+        on a.order__c = c.sfid
+        where due_date__c :: date = cur_date /*cur_date */
+        and
+        c.status in ('DELIVERED', 'SHIPPED')
+        and
+        a.type__c = 'FIRST'
+        and
+        a.status__c not in ('CANCELLED')
+        and
+        c.store__c = 'Germany'),
+
+       (select sum(amount_final__c) from
+            salesforce.payment_request__c a
+        left join (
+        select distinct(orderid) as order_id,   
+        sum(unitprice) FILTER ( where product_name__c = 'Shipment') as shipment_revenue,
+        sum(unitprice)  FILTER ( where product_name__c = 'Adjustment') as discount_revenue,
+        sum(unitprice)  FILTER ( where product_name__c not in('Shipment','Adjustment')) as order_item_revenue
+        from
+        salesforce.orderitem
+        group by orderid
+        ) b
+         on
+        (a.order__c = b.order_id)
+        left join
+        salesforce.order c
+        on a.order__c = c.sfid
+        where due_date__c :: date = cur_date /*cur_date */
+        and
+        c.status in ('DELIVERED', 'SHIPPED')
+        and
+        a.type__c = 'RECURRENT'
+        and
+        a.status__c not in ('CANCELLED')
+        and
+        c.store__c = 'Germany'
+
+        ),
+
+       (SELECT sum(unitprice) FILTER (WHERE  b.product_name__c not in ('Shipment', 'Adjustment'))
+            FROM salesforce.customer_asset_allocation__c a
+            inner join
+            salesforce.orderitem b
+            on
+            a.order_product__c = b.sfid
+            left join
+            salesforce.order c
+            on a.order__c = c.sfid
+            where a.cancelltion_approved__c ::date = cur_date
+            and
+            c.store__c = 'Germany')
+
+
+
+
+           )
+              RETURNING *
+             )
+            SELECT * FROM insertion;
+            END LOOP;
+            END
+
+            $$ LANGUAGE 'plpgsql' VOLATILE;
+
+            SELECT * FROM mrr_de();

@@ -1,0 +1,156 @@
+create temp table order_details as
+     select
+     sfid as order_id,   
+     spree_order_total__c as order_value_spree,
+     shippingcountry as shipping_country,
+     accountid as customer_id,
+     shippingcity as shipping_city,   
+     store__c as store,
+     order_creation__c as created_time,
+     completed__c as completed_time,
+     paid__c as paid_time,
+     approved__c as approved_time,
+     payment_method_name__c as payment_method,
+     test__c as test_flag,
+     reason__c as order_decline_reason,
+     extract(epoch from (completed__c-order_creation__c))/86400 as order_completion_time,
+     extract(epoch from (paid__c - order_creation__c))/86400 as order_payment_time,
+     extract(epoch from (approved__c-order_creation__c))/86400 as order_approval_time,
+     status as order_status
+     from salesforce.order
+
+
+create temp table customer_first_order_date_C as
+     select
+        distinct on (accountid) accountid as customer_id,
+        order_creation__c
+        from salesforce.order
+        order by accountid, order_creation__c asc
+
+create temp table order_current_payment_status as
+     select
+        distinct on (a.sfid) a.sfid as order_id,
+        b.status__c,
+        b.pay_tries__c
+        from salesforce.order a
+        inner join salesforce.payment_request__c b
+        on a.sfid = b.order__c
+        where b.status__c <> 'PLANNED'
+        order by order_id, b.paid__c desc
+
+
+create temp table order_item_payment_details as
+   select n1.order_id,
+   n1.no_order_items,
+   n1.no_items_canceled,
+   n1.order_item_revenue,
+   n1.order_shipment_revenue,
+   n1.order_discount,
+   n1.order_item_canceled_revenue ,
+   n1.order_status,
+   CASE
+   WHEN n1.no_items_canceled > 0 and (n1.no_order_items-n1.no_items_canceled) > 1 THEN 'PARTIALLY_CANCELLED'
+   WHEN n1.no_items_canceled > 0 and (n1.no_order_items-n1.no_items_canceled) = 1 THEN 'FULLY_CANCELLED'
+   when n1.no_items_canceled = 0 and n1.order_status in ('SHIPPED', 'DELIVERED') THEN 'ONGOING'
+   ELSE 'NA'
+   END as order_cancelation_status,
+   n2.status__c as first_payment_status,
+   n2.pay_tries__c as first_payment_tries
+   from
+   (select a.sfid as order_id,
+   a.status as order_status,
+   count(*) as no_order_items,
+   count(*) FILTER (WHERE c.cancelltion_approved__c is not null) as no_items_canceled,   
+   sum(b.unitprice) FILTER (WHERE  b.product_name__c not in ('Shipment', 'Adjustment')) as order_item_revenue,
+   sum(b.unitprice) FILTER (WHERE  b.product_name__c = 'Shipment') as order_shipment_revenue,
+   sum(b.unitprice) FILTER (WHERE  b.product_name__c = 'Adjustment') as order_discount,
+   sum(b.unitprice) FILTER (WHERE  b.product_name__c not in ('Shipment', 'Adjustment') and c.cancelltion_approved__c is not null) as order_item_canceled_revenue   
+
+   from salesforce.order a
+   inner join salesforce.orderitem b
+   on
+   a.sfid = b.orderid
+   left join
+   salesforce.customer_asset_allocation__c c
+   on
+   b.sfid = c.order_product__c
+   group by a.sfid, a.status) n1
+   left join
+   (select a.sfid as order_id,
+   b.status__c,
+   pay_tries__c
+   from salesforce.order a
+   inner join salesforce.payment_request__c b
+   on
+   a.sfid = b.order__c
+   where type__c = 'FIRST'
+   group by a.sfid, b.status__c,
+   pay_tries__c) n2
+   on n1.order_id = n2.order_id
+
+
+
+create temp table order_p as
+     select
+        distinct on (a.sfid) a.sfid as order_id,
+        count(*) FILTER (WHERE b.status__c <> 'PLANNED') as no_of_payments_processed,
+        count(*) FILTER (WHERE b.status__c = 'PAID') AS no_of_succesful_payments,
+        count(*) FILTER (WHERE b.status__c = 'FAILED') AS no_of_failed_payments,
+        sum(pay_tries__c) FILTER (WHERE b.status__c <> 'PLANNED') as no_of_payment_tries
+        from salesforce.order a
+        left outer join salesforce.payment_request__c b
+        on a.sfid = b.order__c
+        group by a.sfid
+
+drop table if exists bi_dwh.order_details
+
+create table bi_dwh.order_details as
+     select
+        a.order_id,
+        a.order_value_spree,
+        a.shipping_country,
+        a.customer_id,
+        a.shipping_city,
+        a.store,
+        a.created_time,
+        a.completed_time,
+        a.paid_time,
+        a.approved_time,
+        a.payment_method,
+        a.test_flag,
+        a.order_decline_reason,
+        a.order_completion_time,
+        a.order_payment_time,
+        a.order_approval_time,
+        a.order_status,
+        CASE
+        WHEN a.created_time > b.order_creation__c THEN 'REPEAT_ORDER'
+        WHEN a.created_time = b.order_creation__c THEN 'NEW_ORDER'
+        ELSE 'NA'
+        END as order_type,
+        c.no_of_payments_processed,
+        c.no_of_succesful_payments,
+        c.no_of_failed_payments,
+        c.no_of_payment_tries,
+        d.no_order_items,
+        d.no_items_canceled,
+        d.order_cancelation_status,
+        d.first_payment_status,
+        d.first_payment_tries,
+        d.order_item_revenue,
+        d.order_shipment_revenue,
+        d.order_discount,
+        d.order_item_canceled_revenue,
+        e.status__c as order_payment_status,
+        e.pay_tries__c as order_current_payment_tries
+
+        from order_details a
+        left join customer_first_order_date_C b
+        on a.customer_id = b.customer_id
+        left join order_p c
+        on a.order_id = c.order_id
+        left join order_item_payment_details d
+        on a.order_id = d.order_id
+        left join order_current_payment_status e
+        on a.order_id = e.order_id
+_______________________________________________________
